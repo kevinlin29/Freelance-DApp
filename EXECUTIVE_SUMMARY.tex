@@ -1,0 +1,46 @@
+\documentclass[11pt]{article}
+
+\usepackage[letterpaper,top=0.5in,bottom=0.5in,left=0.65in,right=0.65in]{geometry}
+\usepackage{setspace}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\singlespacing
+\setlength{\parskip}{4pt}
+\setlist{nosep,leftmargin=1.2em,topsep=2pt,itemsep=2pt}
+
+\pagestyle{empty}
+
+\begin{document}
+
+\begin{center}
+    {\Large\textbf{Executive Summary --- Freelance Marketplace DApp}}\\[3pt]
+    {\small Programming Project, Option A (non-tutorial) \textbullet{} Built from scratch (no seed DApp used)}\\[1pt]
+    {\small Solidity 0.8.20 \textbullet{} Truffle 5.11.5 \textbullet{} Ganache 7.9.1 \textbullet{} Python 3.12.7 / Flask 3.0.3 / web3.py 6.20.4 \textbullet{} HTML/CSS/JS \textbullet{} web3.js 1.10.0 \textbullet{} MetaMask}
+\end{center}
+
+\textbf{What the DApp is.}
+A decentralized freelance marketplace on Ethereum where employers post jobs with milestone-based escrow, freelancers bid, and ETH is released milestone-by-milestone as work is completed. The system is non-custodial: the Flask backend never holds private keys --- every state-changing call is signed by the user's own wallet in MetaMask. The smart contract is the single source of truth; Flask serves only as a read, index, and config layer.
+
+\textbf{What it does.}
+The employer calls \texttt{postJob}, depositing the exact sum of milestone amounts into escrow (\texttt{require(msg.value == sum(milestoneAmounts))}). Freelancers submit bids with an amount, proposal, and expiry duration. The employer accepts one bid (Open $\to$ InProgress), the freelancer marks milestones complete, and the employer releases payment per milestone under Checks-Effects-Interactions with OpenZeppelin \texttt{ReentrancyGuard}. When all milestones are paid the job auto-completes, and the employer can rate the freelancer on-chain (1--5). If the parties disagree, either can raise a dispute, freezing all payments. A separate \texttt{MultiSigArbitration} contract runs a 2-of-3 arbitrator vote; if no consensus within 7 days, either party can trigger a deterministic 50/50 split. The contract is \texttt{Pausable} by the owner for emergencies.
+
+\textbf{Why it is relevant.}
+Centralized platforms (Upwork, Fiverr) extract 10--20\% fees, custody funds, control dispute outcomes unilaterally, and own reputation data workers cannot port. This DApp removes the middleman: escrow is enforced in code, dispute resolution is transparent multisig with a timeout fallback, and reputation lives on-chain tied to a wallet address --- portable, tamper-proof, and auditable.
+
+\textbf{The 6 major features (each involves changes to both Solidity and the frontend):}
+\begin{enumerate}
+    \item \textbf{Multi-milestone escrow.} \emph{Solidity:} \texttt{Milestone} struct with per-milestone \texttt{completed}/\texttt{paid} flags, CEI + \texttt{nonReentrant} on all payment release functions, deposit invariant enforced in \texttt{postJob}, auto-transition to Completed on last payment. \emph{Frontend:} dynamic milestone form, visual progress tracker, per-milestone release buttons, BigInt wei math.
+    \item \textbf{Bid expiry system.} \emph{Solidity:} \texttt{expiresAt} field on bids, expiry enforced in \texttt{acceptBid}, \texttt{withdrawExpiredBid} callable by the freelancer after expiry. \emph{Frontend:} duration input, countdown timer on bid cards, accept button auto-disabled after expiry.
+    \item \textbf{2-of-3 multisig dispute resolution with 7-day timeout.} \emph{Solidity:} separate \texttt{MultiSigArbitration.sol} contract, vote tallying with consensus check, \texttt{claimTimeout} 50/50 split after 7 days, replaceable arbitrators. \emph{Frontend:} arbitrator dashboard with vote UI, dispute button on job detail, Flask \texttt{/api/disputes} endpoint.
+    \item \textbf{On-chain reputation and ratings.} \emph{Solidity:} \texttt{rateFreelancer} with one-time-per-job gate, cumulative \texttt{reputationScore} and \texttt{ratingCount} on \texttt{Profile}, \texttt{totalJobsCompleted} auto-incremented. \emph{Frontend:} star rating widget on completed jobs, average rating on profile cards and bid listings.
+    \item \textbf{User profiles and earnings dashboard.} \emph{Solidity:} \texttt{Profile} struct with name, bio, job counters, create/update events. \emph{Frontend:} profile forms in both dashboards, live freelancer earnings summary (Total Earned / Pending Release / Locked in Escrow) computed from on-chain milestone data.
+    \item \textbf{Category filter and search.} \emph{Solidity:} \texttt{category} field on \texttt{Job}, indexed in \texttt{JobPosted} events. \emph{Backend:} Flask event indexer with persisted block cursor, \texttt{/api/jobs/category/<cat>}. \emph{Frontend:} category filter bar and keyword search on the job board.
+\end{enumerate}
+
+\textbf{Security and testing.}
+CEI ordering and OpenZeppelin \texttt{ReentrancyGuard} on all payment paths; \texttt{Pausable} by owner for emergency freeze. A 76-test pytest suite covers escrow invariants, authorization, dispute edge cases, event correctness, state-machine transitions, and timeout handling --- all passing against a fresh Ganache deployment.
+
+\end{document}

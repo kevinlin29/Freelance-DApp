@@ -55,7 +55,26 @@
                 if (!resp.ok) throw new Error("Failed to fetch jobs");
                 const allJobs = await resp.json();
 
-                renderDashboard(allJobs);
+                // /api/jobs does not include milestones or bids — only counts.
+                // Fetch full details for every job this user is involved in so we
+                // can compute earnings and render per-milestone payment status.
+                const ua = userAccount.toLowerCase();
+                const involvedIds = new Set();
+                allJobs.forEach(j => {
+                    if (j.acceptedFreelancer && j.acceptedFreelancer.toLowerCase() === ua) {
+                        involvedIds.add(j.jobId);
+                    }
+                });
+
+                // Also need full job details to discover bids by this user
+                // (bids aren't returned by /api/jobs either). Fetch all jobs in parallel.
+                const detailPromises = allJobs.map(j =>
+                    fetch(`/api/job/${j.jobId}`).then(r => r.ok ? r.json() : null).catch(() => null)
+                );
+                const details = await Promise.all(detailPromises);
+                const detailedJobs = details.filter(d => d && !d.error);
+
+                renderDashboard(detailedJobs);
             } catch (err) {
                 document.getElementById("dashboardContent").innerHTML =
                     '<div class="empty-state"><h2>Error</h2><p>Failed to load data.</p></div>';
@@ -77,10 +96,31 @@
                 });
             });
 
-            // Active jobs where user is the accepted freelancer
-            const activeJobs = allJobs.filter(j =>
+            // Any job where the user is the accepted freelancer — includes
+            // InProgress, Completed, and Disputed so historical earnings show.
+            const myJobs = allJobs.filter(j =>
                 j.acceptedFreelancer && j.acceptedFreelancer.toLowerCase() === ua
             );
+            const activeJobs = myJobs.filter(j => parseInt(j.status) === 1); // InProgress
+            const completedJobs = myJobs.filter(j => parseInt(j.status) === 2); // Completed
+
+            // ── Earnings calculation (BigInt wei math) ──
+            let earnedWei = 0n;        // milestone.paid == true
+            let pendingWei = 0n;       // completed == true && paid == false
+            let lockedWei = 0n;        // completed == false (still working)
+            myJobs.forEach(job => {
+                (job.milestones || []).forEach(m => {
+                    const amt = BigInt(m.amount || "0");
+                    if (m.paid) {
+                        earnedWei += amt;
+                    } else if (m.completed) {
+                        pendingWei += amt;
+                    } else if (parseInt(job.status) === 1) {
+                        // only count not-yet-completed as "locked" while job is InProgress
+                        lockedWei += amt;
+                    }
+                });
+            });
 
             let html = "";
 
@@ -90,6 +130,31 @@
                     <h2>My Profile</h2>
                     <div id="profileSection">
                         <p style="color:var(--text-secondary);">Loading profile...</p>
+                    </div>
+                </div>
+            `;
+
+            // ── Earnings Summary ──
+            const earnedEth = weiToEth(earnedWei.toString());
+            const pendingEth = weiToEth(pendingWei.toString());
+            const lockedEth = weiToEth(lockedWei.toString());
+            html += `
+                <div class="stat-grid">
+                    <div class="card stat-card">
+                        <div class="stat-value" style="color:var(--mint);">${earnedEth} ETH</div>
+                        <div class="stat-label">Total Earned</div>
+                    </div>
+                    <div class="card stat-card">
+                        <div class="stat-value" style="color:var(--cyan);">${pendingEth} ETH</div>
+                        <div class="stat-label">Pending Release</div>
+                    </div>
+                    <div class="card stat-card">
+                        <div class="stat-value" style="color:var(--text-primary);">${lockedEth} ETH</div>
+                        <div class="stat-label">Locked in Escrow</div>
+                    </div>
+                    <div class="card stat-card">
+                        <div class="stat-value" style="color:var(--text-primary);">${completedJobs.length}</div>
+                        <div class="stat-label">Completed Jobs</div>
                     </div>
                 </div>
             `;
@@ -153,8 +218,12 @@
                     const budgetEth = weiToEth(job.totalBudget || job.budget || "0");
                     const status = parseInt(job.status || 0);
                     const milestones = job.milestones || [];
-                    const completedMs = milestones.filter(m => m.isCompleted || m.completed).length;
-                    const progressPct = milestones.length > 0 ? Math.round((completedMs / milestones.length) * 100) : 0;
+                    const completedMs = milestones.filter(m => m.completed).length;
+                    const paidMs = milestones.filter(m => m.paid).length;
+                    const progressPct = milestones.length > 0 ? Math.round((paidMs / milestones.length) * 100) : 0;
+                    let jobEarnedWei = 0n;
+                    milestones.forEach(m => { if (m.paid) jobEarnedWei += BigInt(m.amount || "0"); });
+                    const jobEarnedEth = weiToEth(jobEarnedWei.toString());
 
                     html += `
                         <div style="border:1px solid var(--border);border-radius:var(--radius);padding:1rem;margin-bottom:1rem;">
@@ -166,13 +235,16 @@
                                     <span class="category-badge">${escapeHtml(job.category || "Other")}</span>
                                     ${statusBadge(status)}
                                 </div>
-                                <div style="font-weight:700;color:var(--mint);">${budgetEth} ETH</div>
+                                <div style="text-align:right;">
+                                    <div style="font-weight:700;color:var(--mint);">${jobEarnedEth} / ${budgetEth} ETH</div>
+                                    <div style="font-size:0.75rem;color:var(--text-secondary);">received / total</div>
+                                </div>
                             </div>
                             <div class="milestone-tracker" style="margin-top:1rem;">
                                 <div class="milestone-progress-bar">
                                     <div class="milestone-progress-fill" style="width:${progressPct}%"></div>
                                 </div>
-                                <p style="font-size:0.8rem;color:var(--text-secondary);">${completedMs} / ${milestones.length} milestones completed</p>
+                                <p style="font-size:0.8rem;color:var(--text-secondary);">${paidMs} / ${milestones.length} milestones paid • ${completedMs} completed</p>
                             </div>
                             <div style="margin-top:0.75rem;">
                                 <a href="/job/${job.jobId}" class="btn btn-primary btn-sm">View Details</a>

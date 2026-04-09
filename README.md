@@ -15,11 +15,12 @@ A decentralized freelance marketplace on Ethereum where employers post jobs, fre
 
 | Layer | Technology |
 |---|---|
-| Smart Contracts | Solidity 0.8.20, OpenZeppelin 5.x |
-| Compiler / Migration | Truffle 5.x |
-| Local Blockchain | Ganache 7.x (chainId 1337) |
-| Backend | Python 3.10+, Flask 3.x, web3.py 6.x |
-| Frontend | HTML, CSS, JavaScript, web3.js 1.x |
+| Smart Contracts | Solidity 0.8.20, OpenZeppelin 5.4.0 |
+| Compiler / Migration | Truffle 5.11.5 |
+| Local Blockchain | Ganache 7.9.1 (chainId 1337) |
+| Backend | Python 3.12.7, Flask 3.0.3, web3.py 6.20.4 |
+| Frontend | HTML, CSS, JavaScript, web3.js 1.10.0 |
+| Runtime | Node.js 22.19.0 |
 | Wallet | MetaMask |
 | Testing | pytest, web3.py |
 
@@ -138,7 +139,7 @@ Click **Connect Wallet** in the top-right corner to connect MetaMask.
 
 ## Running the Test Suite
 
-The test suite contains 19 tests across 4 categories. Ganache must be running.
+The test suite contains 76 tests across 6 categories. Ganache must be running.
 
 ```bash
 # Make sure Ganache is running on port 7545, then:
@@ -153,6 +154,8 @@ python -m pytest test/ -v
 | `test_authorization.py` | 5 | Unauthorized callers are rejected on every function |
 | `test_dispute.py` | 5 | Funds lock on dispute, 2-of-3 voting, 7-day timeout 50/50 split |
 | `test_events.py` | 5 | Correct event emission for indexer and UI sync |
+| `test_state_machine.py` | 30 | Job lifecycle transitions, milestone/bid edge cases, cancel/refund, pause, ratings |
+| `test_consensus.py` | 27 | Arbitrator voting guards, timeout edge cases, odd-wei splits, partial payments |
 
 ### What the Tests Cover
 
@@ -182,6 +185,32 @@ python -m pytest test/ -v
 - `BidWithdrawn` fires when an expired bid is withdrawn
 - `DisputeResolved` emits correct winner and amount after 2-of-3 vote
 - `JobStatusChanged` fires on every status transition (Open → InProgress → Completed)
+
+**State Machine (`test_state_machine.py`):**
+- Dispute requires InProgress status; rejected on Open, Completed, Cancelled
+- Cancel rejected after bid accepted; only employer can cancel
+- Double mark-complete and double-payment both revert
+- Paying an uncompleted milestone reverts
+- `releaseAllPayments` only pays completed milestones
+- Cross-job milestone access reverts
+- Auto-complete triggered on last milestone payment
+- Employer cannot bid on own job; zero-amount bid reverts
+- Accept expired bid reverts; withdraw non-expired bid reverts
+- Cancel refunds exact deposit; double cancel reverts
+- Zero milestones, mismatched arrays, past deadline, zero amount all revert
+- Pause blocks `postJob`; non-owner cannot pause; unpause restores functionality
+- `resolveDispute` and `resolveDisputeWithSplit` only callable by arbitration contract
+- Rating on non-completed job reverts; out-of-range score reverts; freelancer cannot rate
+- Multiple ratings accumulate correctly
+
+**Consensus (`test_consensus.py`):**
+- Non-arbitrator cannot vote; duplicate vote reverts; voting after resolution reverts
+- Only owner can replace arbitrator; invalid index and zero address revert
+- Timeout before 7 days reverts; timeout at exactly 7 days succeeds
+- Stranger cannot claim timeout; freelancer can claim timeout
+- Odd-wei amount splits correctly (remainder to freelancer)
+- Double timeout claim reverts
+- Timeout after partial milestone payments splits only the remaining escrow
 
 ## End-to-End Manual Testing Walkthrough
 
@@ -293,7 +322,9 @@ Freelance-DApp/
 │   ├── test_escrow_invariants.py   # Escrow math tests
 │   ├── test_authorization.py       # Auth negative tests
 │   ├── test_dispute.py             # Dispute edge cases
-│   └── test_events.py              # Event correctness tests
+│   ├── test_events.py              # Event correctness tests
+│   ├── test_state_machine.py       # Job lifecycle & edge cases (30 tests)
+│   └── test_consensus.py           # Arbitrator voting & timeout (27 tests)
 ├── app/
 │   ├── app.py                      # Flask backend
 │   ├── static/
