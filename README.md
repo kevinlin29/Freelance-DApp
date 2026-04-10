@@ -1,5 +1,7 @@
 # Freelance Marketplace DApp
 
+**Authors:** Qiwen Lin (1012495104), Zongyan Yao (1005200836)
+
 A decentralized freelance marketplace on Ethereum where employers post jobs, freelancers bid, and milestone-based escrow releases payment as work is completed.
 
 ## Core Features
